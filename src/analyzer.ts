@@ -32,28 +32,41 @@ export class Analyzer {
             }
 
             console.log('file', filePath);
-            this.getDependencies(file, deps);
+            deps = this.getDependencies(file);
         });
 
-        console.log('Final dependencies:', deps);
+        return deps;
     }
 
-    getDependencies(sourceFile: ts.SourceFile, deps: Dependencies[]) {
+    getDependencies(sourceFile: ts.SourceFile) {
+        let deps: Dependencies[] = [];
         ts.forEachChild(sourceFile, (node) => {
             if (ts.isImportDeclaration(node)) {
-                let moduleName = 'default'; // Default module name if no imports found
-                const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, ''); // Remove quotes
+
+                // console.log(node.getText(sourceFile));
+
+                let moduleName = 'default';
+                const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
                 const resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
 
 
-                if (!modulePath.startsWith('./') && !modulePath.startsWith('../') && !(modulePath == 'buffer' || modulePath === 'stream')) {
-                    // If the module path does not start with './', skip recursive analysis
-                    console.log({moduleName, modulePath});
-                    deps.push({
-                        name: moduleName,
-                        path: modulePath,
-                    });
-                    return; // Skip further processing for this import declaration
+                if (!modulePath.startsWith('./') && !modulePath.startsWith('../')) {
+                    // console.log({t1: !modulePath.startsWith('./'), t2: !modulePath.startsWith('../')});
+                    // console.log({moduleName, modulePath});
+                    // deps.push({
+                    //     name: moduleName,
+                    //     path: resolvedPath,
+                    // });
+                    return;
+                }
+
+                if (resolvedPath.includes('node_modules')) {
+                    // console.log('ignoring', modulePath)
+                    // deps.push({
+                    //     name: moduleName,
+                    //     path: resolvedPath,
+                    // });
+                    return;
                 }
 
                 if (node.importClause) {
@@ -72,31 +85,35 @@ export class Analyzer {
                     }
                 }
 
-                deps.push({
-                    name: moduleName,
-                    path: modulePath,
+
+                // console.log({moduleName, resolvedPath});
+
+                const childSourceFiles = this.getChildSourceFiles(resolvedPath);
+
+                let childDeps: Dependencies[] = [];
+                childSourceFiles.forEach((childSourceFile) => {
+                    // console.log('Going in', childSourceFile.fileName)
+                    let d: Dependencies[] = this.getDependencies(childSourceFile);
+                    childDeps.push(...d);
                 });
 
-                // Recursive dependency analysis only for local imports (starting with './')
-                const childSourceFiles = this.getChildSourceFiles(resolvedPath);
-                childSourceFiles.forEach((childSourceFile) => {
-                    this.getDependencies(childSourceFile, deps);
+                deps.push({
+                    name: moduleName,
+                    path: resolvedPath,
+                    dependencies: childDeps.length > 0 ? childDeps : undefined,
                 });
             }
         });
-    }
 
-
-    private getModulePath(node: ts.ImportDeclaration, sourceFile: ts.SourceFile): string {
-        return node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
+        return deps;
     }
 
     private resolveModulePath(sourceFilePath: string, modulePath: string): string {
         if (modulePath.startsWith('.')) {
-            return path.resolve(path.dirname(sourceFilePath), modulePath);
+            const resolvedPath = path.resolve(path.dirname(sourceFilePath), modulePath);
+            return resolvedPath.endsWith('.ts') ? resolvedPath : `${resolvedPath}.ts`;
         }
-        // Handle non-relative paths if needed (like node modules)
-        return modulePath;
+        return modulePath.endsWith('.ts') ? modulePath : `${modulePath}.ts`;
     }
 
     private getChildSourceFiles(modulePath: string): readonly ts.SourceFile[] {
