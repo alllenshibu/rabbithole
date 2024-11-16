@@ -7,7 +7,9 @@ import {Analyzer, Dependencies} from "./analyzer";
 const cwd = process.cwd();
 
 program
-    .option('-f, --file <file>', 'Entry *.ts file');
+    .option('-f, --file <file>', 'Entry *.ts file')
+    .option('--tsconfig <tsconfig>', 'Path to tsconfig.json file')
+
 
 program.parse(process.argv);
 
@@ -23,12 +25,23 @@ export namespace Application {
         console.log("Arguments:", process.argv);
 
         let files = []
+        let projectRoot: string = "";
+        let allowedPathAliases: Record<string, string[]> = {};
 
         if (options.file) {
-            console.log(`File provided: ${options.file}`);
-
             files = [options.file];
-            let analyzer: Analyzer = new Analyzer(files);
+
+            if (options.tsconfig) {
+                const tsconfig = JSON.parse(fs.readFileSync(options.tsconfig, 'utf8'));
+
+                projectRoot = path.dirname(options.tsconfig);
+
+                if (tsconfig.compilerOptions && tsconfig.compilerOptions.paths) {
+                    allowedPathAliases = tsconfig.compilerOptions.paths;
+                }
+            }
+
+            let analyzer: Analyzer = new Analyzer(files, projectRoot, allowedPathAliases);
 
             let deps: Dependencies[] = analyzer.createDependencyAnalysis()
 

@@ -9,10 +9,20 @@ export interface Dependencies {
 
 export class Analyzer {
     private files: string[];
+    private projectRoot: string;
+    private allowedPathAliases: Map<string, string> = new Map();
     private program: ts.Program;
 
-    constructor(files: string[]) {
+    constructor(files: string[], projectRoot: string, allowedPathAliases: Record<string, string[]>) {
         this.files = files;
+        this.projectRoot = projectRoot;
+
+        for (const [alias, paths] of Object.entries(allowedPathAliases)) {
+            if (paths.length > 0) {
+                this.allowedPathAliases.set(alias, paths[0]);
+            }
+        }
+
         const transpileOptions = {
             target: ts.ScriptTarget.ES5,
             module: ts.ModuleKind.CommonJS,
@@ -47,51 +57,30 @@ export class Analyzer {
 
                 let moduleName = 'default';
                 const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
-                const resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
+                let resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
 
+                if (!resolvedPath) return;
 
-                if (!modulePath.startsWith('./') && !modulePath.startsWith('../')) {
-                    // console.log({t1: !modulePath.startsWith('./'), t2: !modulePath.startsWith('../')});
-                    // console.log({moduleName, modulePath});
-                    // deps.push({
-                    //     name: moduleName,
-                    //     path: resolvedPath,
-                    // });
-                    return;
-                }
+                // console.log(resolvedPath)
 
-                if (resolvedPath.includes('node_modules')) {
-                    // console.log('ignoring', modulePath)
-                    // deps.push({
-                    //     name: moduleName,
-                    //     path: resolvedPath,
-                    // });
-                    return;
-                }
-
-                if (node.importClause) {
-                    if (ts.isImportClause(node.importClause)) {
-                        if (node.importClause.namedBindings) {
-                            if (ts.isNamedImports(node.importClause.namedBindings)) {
-                                moduleName = node.importClause.namedBindings.elements
-                                    .map(element => element.name.getText(sourceFile))
-                                    .join(', ');
-                            } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
-                                moduleName = `* as ${node.importClause.namedBindings.name.getText(sourceFile)}`;
-                            }
-                        } else if (node.importClause.name) {
-                            moduleName = node.importClause.name.getText(sourceFile);
-                        }
+                if (node?.importClause?.namedBindings) {
+                    if (ts.isNamedImports(node.importClause.namedBindings)) {
+                        moduleName = node.importClause.namedBindings.elements
+                            .map(element => element.name.getText(sourceFile))
+                            .join(', ');
+                    } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
+                        moduleName = `* as ${node.importClause.namedBindings.name.getText(sourceFile)}`;
                     }
+                } else if (node?.importClause?.name) {
+                    moduleName = node.importClause.name.getText(sourceFile);
                 }
-
-
-                // console.log({moduleName, resolvedPath});
 
                 const childSourceFiles = this.getChildSourceFiles(resolvedPath);
 
                 let childDeps: Dependencies[] = [];
                 childSourceFiles.forEach((childSourceFile) => {
+                    if (childSourceFile.fileName.includes("node_modules")) return;
+
                     // console.log('Going in', childSourceFile.fileName)
                     let d: Dependencies[] = this.getDependencies(childSourceFile);
                     childDeps.push(...d);
@@ -108,16 +97,31 @@ export class Analyzer {
         return deps;
     }
 
-    private resolveModulePath(sourceFilePath: string, modulePath: string): string {
+    private resolveModulePath(sourceFilePath: string, modulePath: string): string | null {
+        let resolvedPath: string = ''
         if (modulePath.startsWith('.')) {
-            const resolvedPath = path.resolve(path.dirname(sourceFilePath), modulePath);
-            return resolvedPath.endsWith('.ts') ? resolvedPath : `${resolvedPath}.ts`;
+            resolvedPath = path.resolve(path.dirname(sourceFilePath), modulePath);
         }
-        return modulePath.endsWith('.ts') ? modulePath : `${modulePath}.ts`;
+
+        const aliasMatch = [...this.allowedPathAliases.entries()].find(([alias]) =>
+            modulePath.startsWith(alias));
+
+        if (aliasMatch) {
+            const [alias, replacement] = aliasMatch;
+            resolvedPath = modulePath.replace(alias, replacement);
+            resolvedPath = path.resolve(this.projectRoot, resolvedPath);
+        }
+
+        if (resolvedPath === '') return null;
+
+        if (resolvedPath.includes('node_modules')) return null
+
+        resolvedPath = resolvedPath.endsWith('.ts') ? resolvedPath : `${resolvedPath}.ts`;
+
+        return resolvedPath
     }
 
-    private getChildSourceFiles(modulePath: string): readonly ts.SourceFile[] {
-        const resolvedPath = path.resolve(modulePath);
+    private getChildSourceFiles(resolvedPath: string): readonly ts.SourceFile[] {
         const childProgram = ts.createProgram([resolvedPath], {
             target: ts.ScriptTarget.ES5,
             module: ts.ModuleKind.CommonJS,
