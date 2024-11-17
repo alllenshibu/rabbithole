@@ -13,6 +13,8 @@ export class Analyzer {
     private allowedPathAliases: Map<string, string> = new Map();
     private program: ts.Program;
 
+    private moduleDependencies: Map<string, Dependency> = new Map()
+
     constructor(file: string, projectRoot: string, allowedPathAliases: Record<string, string[]>) {
         this.file = file;
         this.projectRoot = projectRoot;
@@ -41,7 +43,6 @@ export class Analyzer {
             path: path.resolve(this.file)
         };
 
-
         sourceFiles.forEach((file: ts.SourceFile) => {
             let filePath = path.resolve(file.fileName);
 
@@ -59,13 +60,13 @@ export class Analyzer {
         };
     }
 
-
-    private getDependencies(sourceFile: ts.SourceFile) {
+    private getDependencies(sourceFile: ts.SourceFile): Dependency[] {
         let deps: Dependency[] = [];
+
         ts.forEachChild(sourceFile, (node) => {
             if (ts.isImportDeclaration(node)) {
 
-                let moduleNames: string[] = ['default']
+                let moduleNames: string[] = ['default'];
                 const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
                 let resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
 
@@ -76,10 +77,24 @@ export class Analyzer {
                         moduleNames = node.importClause.namedBindings.elements
                             .map(element => element.name.getText(sourceFile));
                     } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
-                        moduleNames = [`* as ${node.importClause.namedBindings.name.getText(sourceFile)}`]
+                        moduleNames = [`* as ${node.importClause.namedBindings.name.getText(sourceFile)}`];
                     }
                 } else if (node?.importClause?.name) {
-                    moduleNames = [node.importClause.name.getText(sourceFile)]
+                    moduleNames = [node.importClause.name.getText(sourceFile)];
+                }
+
+                if (this.moduleDependencies.has(resolvedPath)) {
+                    const cachedDep = this.moduleDependencies.get(resolvedPath);
+                    if (cachedDep) {
+                        moduleNames.forEach(moduleName => {
+                            deps.push({
+                                name: moduleName,
+                                path: cachedDep.path,
+                                dependencies: cachedDep.dependencies,
+                            });
+                        });
+                    }
+                    return;
                 }
 
                 const childSourceFiles = this.getChildSourceFiles(resolvedPath);
@@ -92,13 +107,21 @@ export class Analyzer {
                     childDeps.push(...d);
                 });
 
+                const dep: Dependency = {
+                    name: '',
+                    path: resolvedPath,
+                    dependencies: childDeps.length > 0 ? childDeps : undefined,
+                };
+
+                this.moduleDependencies.set(resolvedPath, dep);
+
                 moduleNames.forEach((moduleName: string) => {
                     deps.push({
                         name: moduleName,
                         path: resolvedPath,
                         dependencies: childDeps.length > 0 ? childDeps : undefined,
                     });
-                })
+                });
             }
         });
 
@@ -106,7 +129,7 @@ export class Analyzer {
     }
 
     private resolveModulePath(sourceFilePath: string, modulePath: string): string | null {
-        let resolvedPath: string = ''
+        let resolvedPath: string = '';
         if (modulePath.startsWith('.')) {
             resolvedPath = path.resolve(path.dirname(sourceFilePath), modulePath);
         }
@@ -122,11 +145,11 @@ export class Analyzer {
 
         if (resolvedPath === '') return null;
 
-        if (resolvedPath.includes('node_modules')) return null
+        if (resolvedPath.includes('node_modules')) return null;
 
         resolvedPath = resolvedPath.endsWith('.ts') ? resolvedPath : `${resolvedPath}.ts`;
 
-        return resolvedPath
+        return resolvedPath;
     }
 
     private getChildSourceFiles(resolvedPath: string): readonly ts.SourceFile[] {
