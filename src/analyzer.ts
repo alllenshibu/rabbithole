@@ -55,7 +55,7 @@ export class Analyzer {
 
                 // console.log(node.getText(sourceFile));
 
-                let moduleName = 'default';
+                let moduleNames: string[] = ['default']
                 const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
                 let resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
 
@@ -65,14 +65,13 @@ export class Analyzer {
 
                 if (node?.importClause?.namedBindings) {
                     if (ts.isNamedImports(node.importClause.namedBindings)) {
-                        moduleName = node.importClause.namedBindings.elements
-                            .map(element => element.name.getText(sourceFile))
-                            .join(', ');
+                        moduleNames = node.importClause.namedBindings.elements
+                            .map(element => element.name.getText(sourceFile));
                     } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
-                        moduleName = `* as ${node.importClause.namedBindings.name.getText(sourceFile)}`;
+                        moduleNames = [`* as ${node.importClause.namedBindings.name.getText(sourceFile)}`]
                     }
                 } else if (node?.importClause?.name) {
-                    moduleName = node.importClause.name.getText(sourceFile);
+                    moduleNames = [node.importClause.name.getText(sourceFile)]
                 }
 
                 const childSourceFiles = this.getChildSourceFiles(resolvedPath);
@@ -86,11 +85,13 @@ export class Analyzer {
                     childDeps.push(...d);
                 });
 
-                deps.push({
-                    name: moduleName,
-                    path: resolvedPath,
-                    dependencies: childDeps.length > 0 ? childDeps : undefined,
-                });
+                moduleNames.forEach((moduleName: string) => {
+                    deps.push({
+                        name: moduleName,
+                        path: resolvedPath,
+                        dependencies: childDeps.length > 0 ? childDeps : undefined,
+                    });
+                })
             }
         });
 
