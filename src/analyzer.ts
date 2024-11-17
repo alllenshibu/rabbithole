@@ -1,20 +1,20 @@
 import * as path from 'path';
 import * as ts from 'typescript';
 
-export interface Dependencies {
+export interface Dependency {
     name: string;
     path: string;
-    dependencies?: Dependencies[];
+    dependencies?: Dependency[];
 }
 
 export class Analyzer {
-    private files: string[];
+    private file: string;
     private projectRoot: string;
     private allowedPathAliases: Map<string, string> = new Map();
     private program: ts.Program;
 
-    constructor(files: string[], projectRoot: string, allowedPathAliases: Record<string, string[]>) {
-        this.files = files;
+    constructor(file: string, projectRoot: string, allowedPathAliases: Record<string, string[]>) {
+        this.file = file;
         this.projectRoot = projectRoot;
 
         for (const [alias, paths] of Object.entries(allowedPathAliases)) {
@@ -27,41 +27,49 @@ export class Analyzer {
             target: ts.ScriptTarget.ES5,
             module: ts.ModuleKind.CommonJS,
         };
-        this.program = ts.createProgram(this.files, transpileOptions);
+        this.program = ts.createProgram([this.file], transpileOptions);
     }
 
     createDependencyAnalysis() {
-        let deps: Dependencies[] = [];
+        let deps: Dependency[] = [];
         let sourceFiles: readonly ts.SourceFile[] = this.program.getSourceFiles();
+
+        const rootFileNamesWithModules = {
+            name: path
+                .basename(this.file)
+                .replace(/\.[^/.]+$/, ''),
+            path: path.resolve(this.file)
+        };
+
 
         sourceFiles.forEach((file: ts.SourceFile) => {
             let filePath = path.resolve(file.fileName);
 
-            if (!this.files.map(f => path.resolve(f)).includes(filePath)) {
-                return;
-            }
+            // Skip non-root files
+            if (!path.resolve(this.file).includes(filePath)) return
 
-            console.log('file', filePath);
-            deps = this.getDependencies(file);
+            console.log('Processing file:', filePath);
+            deps.push(...this.getDependencies(file));
         });
 
-        return deps;
+        return {
+            name: rootFileNamesWithModules.name,
+            path: rootFileNamesWithModules.path,
+            dependencies: deps
+        };
     }
 
-    getDependencies(sourceFile: ts.SourceFile) {
-        let deps: Dependencies[] = [];
+
+    private getDependencies(sourceFile: ts.SourceFile) {
+        let deps: Dependency[] = [];
         ts.forEachChild(sourceFile, (node) => {
             if (ts.isImportDeclaration(node)) {
-
-                // console.log(node.getText(sourceFile));
 
                 let moduleNames: string[] = ['default']
                 const modulePath = node.moduleSpecifier.getText(sourceFile).replace(/['"]/g, '');
                 let resolvedPath = this.resolveModulePath(sourceFile.fileName, modulePath);
 
                 if (!resolvedPath) return;
-
-                // console.log(resolvedPath)
 
                 if (node?.importClause?.namedBindings) {
                     if (ts.isNamedImports(node.importClause.namedBindings)) {
@@ -76,12 +84,11 @@ export class Analyzer {
 
                 const childSourceFiles = this.getChildSourceFiles(resolvedPath);
 
-                let childDeps: Dependencies[] = [];
+                let childDeps: Dependency[] = [];
                 childSourceFiles.forEach((childSourceFile) => {
                     if (childSourceFile.fileName.includes("node_modules")) return;
 
-                    // console.log('Going in', childSourceFile.fileName)
-                    let d: Dependencies[] = this.getDependencies(childSourceFile);
+                    let d: Dependency[] = this.getDependencies(childSourceFile);
                     childDeps.push(...d);
                 });
 

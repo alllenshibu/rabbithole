@@ -1,15 +1,13 @@
-import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
 import {program} from 'commander';
-import {Analyzer, Dependencies} from "./analyzer";
+import {Analyzer, Dependency} from "./analyzer";
 
 const cwd = process.cwd();
 
 program
     .option('-f, --file <file>', 'Entry *.ts file')
     .option('--tsconfig <tsconfig>', 'Path to tsconfig.json file')
-
 
 program.parse(process.argv);
 
@@ -22,14 +20,12 @@ export namespace Application {
     export const run = () => {
         const options = program.opts();
 
-        console.log("Arguments:", process.argv);
-
-        let files = []
+        let file: string = ''
         let projectRoot: string = "";
         let allowedPathAliases: Record<string, string[]> = {};
 
         if (options.file) {
-            files = [options.file];
+            file = options.file;
 
             if (options.tsconfig) {
                 const tsconfig = JSON.parse(fs.readFileSync(options.tsconfig, 'utf8'));
@@ -41,33 +37,92 @@ export namespace Application {
                 }
             }
 
-            let analyzer: Analyzer = new Analyzer(files, projectRoot, allowedPathAliases);
+            let analyzer: Analyzer = new Analyzer(file, projectRoot, allowedPathAliases);
 
-            let deps: Dependencies[] = analyzer.createDependencyAnalysis()
+            let dependencyAnalysis: {
+                name: string;
+                path: string;
+                dependencies: Dependency[];
+            } = analyzer.createDependencyAnalysis();
 
-            fs.writeFile(path.join(cwd, 'deps.json'), JSON.stringify(deps, null, 2), (err) => {
-                if (err) {
-                    console.error(err);
-                    process.exit(1);
-                } else {
-                    console.log('Dependency analysis completed, file has been saved');
-                }
-            })
+            const mermaidGraph: string = convertToMermaidGraph(dependencyAnalysis);
 
-            // const printDependencyTree = (deps: Dependencies[], level: number = 0) => {
-            //     deps.forEach((dep: Dependencies) => {
-            //         for (let i = 0; i < level; i++)
-            //             process.stdout.write('- ');
-            //         console.log(`- ${dep.name} (${dep.path})`);
-            //         if (dep.dependencies)
-            //             printDependencyTree(dep.dependencies, level + 1);
-            //     });
-            // }
-
-            // printDependencyTree(deps);
+            saveDependencyAnalysis(dependencyAnalysis, "deps.json");
+            saveDependencyAnalysisGraph(mermaidGraph, "deps.html");
 
         } else {
             outputHelp();
         }
     };
+    const convertToMermaidGraph = (dependencyAnalysis: {
+        name: string;
+        path: string;
+        dependencies: Dependency[]
+    }): string => {
+        let mermaidGraph = "graph TD\n";
+
+        const processNode =
+            (node: Dependency, parentName: string | null = null): void => {
+                if (!node.name)
+                    return;
+
+                const nodeName: string = node.name.replace(/\W/g, "_");
+
+                mermaidGraph += `    ${nodeName}["${node.name}"]\n`;
+
+                if (parentName) {
+                    mermaidGraph += `    ${parentName} --> ${nodeName}\n`;
+                }
+
+                if (Array.isArray(node.dependencies)) {
+                    node.dependencies.forEach((dependency: Dependency) => {
+                        processNode(dependency, nodeName);
+                    });
+                }
+            }
+
+        processNode(dependencyAnalysis);
+
+        return mermaidGraph;
+    }
+
+    const saveDependencyAnalysis = (dependencyAnalysis: {
+        name: string;
+        path: string;
+        dependencies: Dependency[]
+    }, outputPath: string): void => {
+        fs.writeFile(path.join(cwd, outputPath), JSON.stringify(dependencyAnalysis, null, 2), (err) => {
+            if (err) {
+                console.error(err);
+                process.exit(1);
+            } else {
+                console.log('Dependency analysis json file has been saved');
+            }
+        });
+    }
+
+    const saveDependencyAnalysisGraph = (mermaidGraph: string, outputPath: string): void => {
+        const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mermaid Graph</title>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs"></script>
+</head>
+<body>
+    <div class="mermaid">
+${mermaidGraph}
+    </div>
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+</body>
+</html>
+`;
+
+        fs.writeFileSync(outputPath, htmlContent, 'utf8');
+        console.log(`Dependency analysis graph saved to ${outputPath}`);
+    }
 }
