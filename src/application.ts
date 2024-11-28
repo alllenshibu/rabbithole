@@ -34,6 +34,20 @@ export namespace Application {
 
                 if (tsconfig.compilerOptions && tsconfig.compilerOptions.paths) {
                     allowedPathAliases = tsconfig.compilerOptions.paths;
+
+                    for (let alias in allowedPathAliases) {
+                        if (alias.endsWith("/*")) {
+                            let paths: string[] = allowedPathAliases[alias];
+                            alias = alias.slice(0, -2);
+                            allowedPathAliases[alias] = paths;
+                        }
+
+                        if (allowedPathAliases[alias].length > 0) {
+                            allowedPathAliases[alias] = allowedPathAliases[alias].map((path: string) => {
+                                return path.endsWith("/*") ? path.slice(0, -2) : path;
+                            });
+                        }
+                    }
                 }
             }
 
