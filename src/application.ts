@@ -8,6 +8,7 @@ const cwd = process.cwd();
 program
     .option('-f, --file <file>', 'Entry *.ts file')
     .option('--tsconfig <tsconfig>', 'Path to tsconfig.json file')
+    .option('--depth <depth>', 'Depth of dependency analysis')
 
 program.parse(process.argv);
 
@@ -22,10 +23,12 @@ export namespace Application {
 
         let file: string = ''
         let projectRoot: string = "";
+        let depth: number = 1;
         let allowedPathAliases: Record<string, string[]> = {};
 
         if (options.file) {
             file = options.file;
+            depth = options.depth ? parseInt(options.depth) : 1;
 
             if (options.tsconfig) {
                 const tsconfig = JSON.parse(fs.readFileSync(options.tsconfig, 'utf8'));
@@ -51,7 +54,7 @@ export namespace Application {
                 }
             }
 
-            let analyzer: Analyzer = new Analyzer(file, projectRoot, allowedPathAliases);
+            let analyzer: Analyzer = new Analyzer(file, projectRoot, allowedPathAliases, depth);
 
             let dependencyAnalysis: {
                 name: string;

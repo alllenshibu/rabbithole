@@ -10,14 +10,16 @@ export interface Dependency {
 export class Analyzer {
     private file: string;
     private projectRoot: string;
+    private depth: number;
     private allowedPathAliases: Map<string, string> = new Map();
     private program: ts.Program;
 
     private moduleDependencies: Map<string, Dependency> = new Map()
 
-    constructor(file: string, projectRoot: string, allowedPathAliases: Record<string, string[]>) {
+    constructor(file: string, projectRoot: string, allowedPathAliases: Record<string, string[]>, depth: number) {
         this.file = file;
         this.projectRoot = projectRoot;
+        this.depth = depth;
 
         for (const [alias, paths] of Object.entries(allowedPathAliases)) {
             if (paths.length > 0) {
@@ -49,8 +51,7 @@ export class Analyzer {
             // Skip non-root files
             if (!path.resolve(this.file).includes(filePath)) return
 
-            console.log('Processing file:', filePath);
-            deps.push(...this.getDependencies(file));
+            deps.push(...this.getDependencies(file, this.depth));
         });
 
         return {
@@ -60,7 +61,11 @@ export class Analyzer {
         };
     }
 
-    private getDependencies(sourceFile: ts.SourceFile): Dependency[] {
+    private getDependencies(sourceFile: ts.SourceFile, level: number): Dependency[] {
+        if(level === 0) return [];
+
+        console.log("Processing file:", sourceFile.fileName);
+
         let deps: Dependency[] = [];
 
         ts.forEachChild(sourceFile, (node) => {
@@ -103,7 +108,7 @@ export class Analyzer {
                 childSourceFiles.forEach((childSourceFile) => {
                     if (childSourceFile.fileName.includes("node_modules")) return;
 
-                    let d: Dependency[] = this.getDependencies(childSourceFile);
+                    let d: Dependency[] = this.getDependencies(childSourceFile, level - 1);
                     childDeps.push(...d);
                 });
 
