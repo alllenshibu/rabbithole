@@ -1,5 +1,7 @@
 import * as path from 'path';
 import * as ts from 'typescript';
+import * as fs from 'fs';
+import * as os from 'os';
 
 export interface Dependency {
     name: string;
@@ -13,8 +15,8 @@ export class Analyzer {
     private depth: number;
     private allowedPathAliases: Map<string, string> = new Map();
     private program: ts.Program;
-
-    private moduleDependencies: Map<string, Dependency> = new Map()
+    private tempDir: string;
+    private moduleCacheFile: string;
 
     constructor(file: string, projectRoot: string, allowedPathAliases: Record<string, string[]>, depth: number) {
         this.file = file;
@@ -32,6 +34,13 @@ export class Analyzer {
             module: ts.ModuleKind.CommonJS,
         };
         this.program = ts.createProgram([this.file], transpileOptions);
+
+        this.tempDir = fs.mkdtempSync(path.join(process.cwd(), 'analyzer-'));
+        this.moduleCacheFile = path.join(this.tempDir, 'moduleCache.json');
+
+        if (!fs.existsSync(this.moduleCacheFile)) {
+            fs.writeFileSync(this.moduleCacheFile, JSON.stringify({}));
+        }
     }
 
     createDependencyAnalysis() {
@@ -53,6 +62,8 @@ export class Analyzer {
 
             deps.push(...this.getDependencies(file, this.depth));
         });
+
+        this.cleanup();
 
         return {
             name: rootFileNamesWithModules.name,
@@ -88,17 +99,15 @@ export class Analyzer {
                     moduleNames = [node.importClause.name.getText(sourceFile)];
                 }
 
-                if (this.moduleDependencies.has(resolvedPath)) {
-                    const cachedDep = this.moduleDependencies.get(resolvedPath);
-                    if (cachedDep) {
-                        moduleNames.forEach(moduleName => {
-                            deps.push({
-                                name: moduleName,
-                                path: cachedDep.path,
-                                dependencies: cachedDep.dependencies,
-                            });
+                const cachedDep = this.getCachedDependency(resolvedPath);
+                if (cachedDep) {
+                    moduleNames.forEach(moduleName => {
+                        deps.push({
+                            name: moduleName,
+                            path: cachedDep.path,
+                            dependencies: cachedDep.dependencies,
                         });
-                    }
+                    });
                     return;
                 }
 
@@ -118,7 +127,7 @@ export class Analyzer {
                     dependencies: childDeps.length > 0 ? childDeps : undefined,
                 };
 
-                this.moduleDependencies.set(resolvedPath, dep);
+                this.cacheDependency(resolvedPath, dep);
 
                 moduleNames.forEach((moduleName: string) => {
                     deps.push({
@@ -164,5 +173,22 @@ export class Analyzer {
             moduleResolution: ts.ModuleResolutionKind.NodeJs,
         });
         return childProgram.getSourceFiles();
+    }
+
+    private cacheDependency(modulePath: string, dependency: Dependency) {
+        const cache = JSON.parse(fs.readFileSync(this.moduleCacheFile, 'utf-8'));
+        cache[modulePath] = dependency;
+        fs.writeFileSync(this.moduleCacheFile, JSON.stringify(cache));
+    }
+
+    private getCachedDependency(modulePath: string): Dependency | null {
+        const cache = JSON.parse(fs.readFileSync(this.moduleCacheFile, 'utf-8'));
+        return cache[modulePath] || null;
+    }
+
+    cleanup() {
+        if (fs.existsSync(this.tempDir)) {
+            fs.rmSync(this.tempDir, { recursive: true, force: true });
+        }
     }
 }
